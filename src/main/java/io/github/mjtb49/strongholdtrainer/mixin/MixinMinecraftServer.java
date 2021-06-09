@@ -7,12 +7,14 @@ import io.github.mjtb49.strongholdtrainer.api.StrongholdTreeAccessor;
 import io.github.mjtb49.strongholdtrainer.ml.StrongholdRoomClassifier;
 import io.github.mjtb49.strongholdtrainer.render.Color;
 import io.github.mjtb49.strongholdtrainer.render.Cuboid;
+import io.github.mjtb49.strongholdtrainer.render.Line;
 import io.github.mjtb49.strongholdtrainer.render.TextRenderer;
 import io.github.mjtb49.strongholdtrainer.util.EntryNode;
 import io.github.mjtb49.strongholdtrainer.util.StrongholdSearcher;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.PlayerManager;
+import net.minecraft.server.ServerNetworkIo;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.structure.StrongholdGenerator;
@@ -22,7 +24,9 @@ import net.minecraft.text.LiteralText;
 import net.minecraft.util.Formatting;
 import net.minecraft.util.math.BlockBox;
 import net.minecraft.util.math.Box;
+import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.gen.feature.StructureFeature;
+import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
@@ -37,32 +41,66 @@ import java.util.function.BooleanSupplier;
 public class MixinMinecraftServer {
 
     @Shadow private PlayerManager playerManager;
+    @Shadow @Final private ServerNetworkIo networkIo;
     private StructurePiece lastpiece = null;
     private StructurePiece mlChosen = null;
     private final Map<StructurePiece, Double> percents = new HashMap<>();
     DecimalFormat df = new DecimalFormat("0.00");
+    private final List<StructureStart<?>> visitedNull = new ArrayList<>();
+    private int ticksInStronghold = -1;
+    private Vec3d lastPlayerPosition;
 
     @Inject(method = "tick", at = @At("HEAD"))
     private void inject(BooleanSupplier shouldKeepTicking, CallbackInfo ci) {
+
         for (ServerPlayerEntity player : this.playerManager.getPlayerList()) {
             ServerWorld world = player.getServerWorld();
+
+            if (ticksInStronghold >= 0) {
+                ticksInStronghold++;
+                if (!player.isSpectator() && !player.isCreative()) {
+                    if (lastPlayerPosition != null)
+                        if (lastPlayerPosition.distanceTo(player.getPos()) < 10)
+                            StrongholdTrainer.submitPlayerLine(new Line(lastPlayerPosition.add(0,0.01,0), player.getPos().add(0,0.01,0), Color.PINK));
+                    lastPlayerPosition = player.getPos();
+                } else {
+                    lastPlayerPosition = null;
+                }
+            }
 
             StructureStart<?> start = world.getStructureAccessor().method_28388(player.getBlockPos(), true, StructureFeature.STRONGHOLD);
 
             if (start != StructureStart.DEFAULT) {
                 StrongholdGenerator.Start strongholdStart = ((StartAccessor)start).getStart();
+                if (strongholdStart == null) {
+                    if (!this.visitedNull.contains(start)) {
+                        this.visitedNull.add(start);
+                        player.sendMessage(new LiteralText("Please visit a new stronghold!").formatted(Formatting.RED), false);
+                    }
+                    continue;
+                }
 
                 for (StructurePiece piece : start.getChildren()) {
                     int yOffset = ((StartAccessor)start).getYOffset();
 
                     if (piece.getBoundingBox().contains(player.getBlockPos())) {
                         if (lastpiece != piece) {
+
+                            if (lastpiece instanceof StrongholdGenerator.Start && !lastpiece.getBoundingBox().contains(player.getBlockPos())) {
+                                ticksInStronghold = 1;
+                            }
+
+                            if (piece instanceof StrongholdGenerator.PortalRoom && ticksInStronghold >= 0) {
+                                player.sendMessage(new LiteralText("Time of " + ticksInStronghold / 20.0 + " seconds").formatted(Formatting.DARK_GREEN), false);
+                                ticksInStronghold = -1;
+                            }
+
                             lastpiece = piece;
                             double[] policy = StrongholdRoomClassifier.getPredictions(((StartAccessor) start).getStart(), (StrongholdGenerator.Piece) piece);
 
-                            StringBuilder s = new StringBuilder();
-                            Arrays.stream(policy).forEach(e -> s.append(df.format(e)).append(" "));
-                            MinecraftClient.getInstance().player.sendMessage(new LiteralText(s.toString()).formatted(Formatting.YELLOW), false);
+                            //StringBuilder s = new StringBuilder();
+                            //Arrays.stream(policy).forEach(e -> s.append(df.format(e)).append(" "));
+                            //player.sendMessage(new LiteralText(s.toString()).formatted(Formatting.YELLOW), false);
 
                             List<StructurePiece> pieces = ((StrongholdTreeAccessor)((StartAccessor) start).getStart()).getTree().getOrDefault(piece, new ArrayList<>());
 
@@ -110,7 +148,7 @@ public class MixinMinecraftServer {
 
                             BlockBox newBox = new BlockBox(entrance.minX, entrance.minY + yOffset, entrance.minZ, entrance.maxX - 1, entrance.maxY + yOffset - 1, entrance.maxZ - 1);
 
-                            Color color = node.type == EntryNode.Type.FORWARDS ? Color.ORANGE : Color.YELLOW;
+                            Color color = node.type == EntryNode.Type.FORWARDS ? Color.WHITE : Color.YELLOW;
 
                             boolean isBlue = false;
                             if (searchResult == null) {

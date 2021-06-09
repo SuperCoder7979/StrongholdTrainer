@@ -9,10 +9,16 @@ import net.fabricmc.api.ModInitializer;
 public class StrongholdTrainer implements ModInitializer  {
 
     static RendererGroup<Cuboid> cuboidRendererGroup = new RendererGroup<>(7, RendererGroup.RenderOption.RENDER_FRONT);
+    static RendererGroup<Line> playerTracerGroup = new RendererGroup<>(20 * 60 * 5, RendererGroup.RenderOption.RENDER_BACK);
 
     static public void submitRoom(Cuboid cuboid) {
         cuboidRendererGroup.addRenderer(cuboid);
     }
+    static public void submitPlayerLine(Line line) {
+        playerTracerGroup.addRenderer(line);
+    }
+
+    private static boolean renderHints = true;
 
     @Override
     public void onInitialize() {
@@ -24,12 +30,34 @@ public class StrongholdTrainer implements ModInitializer  {
             GlStateManager.disableDepthTest();
             RenderSystem.defaultBlendFunc();
 
-            if (cuboidRendererGroup != null)
+            if (cuboidRendererGroup != null && renderHints) {
                 cuboidRendererGroup.render();
-            TextRenderer.render();
+                GlStateManager.enableBlend();
+                playerTracerGroup.render();
+                GlStateManager.disableBlend();
+                TextRenderer.render();
+            }
 
             RenderSystem.popMatrix();
 
         });
     }
+
+    public static void setRenderHints(boolean renderHints) {
+       StrongholdTrainer.renderHints = renderHints;
+    }
+
+    public static boolean getRenderHints() {
+        return renderHints;
+    }
+
+    public static void clearAll() {
+        cuboidRendererGroup.clear();
+        playerTracerGroup.clear();
+    }
+
+    public static void clearPlayerTracer() {
+        playerTracerGroup.clear();
+    }
+
 }
